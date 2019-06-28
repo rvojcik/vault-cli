@@ -49,8 +49,9 @@ Options:
   --follow / --no-follow          Follow links (created with "ln")
   -v, --verbose                   Use multiple times to increase verbosity
   --config-file PATH              Config file to use. Use 'no' to disable
-                                  config file. Default value: first of
-                                  ./.vault.yml, ~/.vault.yml, /etc/vault.yml
+                                  config file. Default value: /etc/vault.yml,
+                                  ~/.vault.yml, ./.vault.yml
+  -c, --select-config TEXT        Name of the sub-configuration to use
   -h, --help                      Show this message and exit.
 
 Commands:
@@ -307,11 +308,13 @@ def test_bla(vault):
 ```
 
 ## Configuration
+### Configuration files
 
-The first file found in the following location is read, parsed and used:
-1. `/etc/vault.yml`
-2. `~/.vault.yml`
-3. `./.vault.yml`
+All configuration files from the following locations are read, merged, parsed and used:
+1. `/etc/vault.d/*.yml` (all files read in alphanumerical order)
+2. `/etc/vault.yml`
+3. `~/.vault.yml`
+4. `./.vault.yml`
 
 Any option passed as command line flag will be used over the corresponding
 option in the documentation (use either `-` or `_`).
@@ -351,8 +354,34 @@ base-path: project/
 If you do so, make sure the permissions of the configuration file itself are
 not too broad
 
-Just note that the `--verify / --no-verify` flag become `verify: yes` or
+Just note that booleans such as `--verify / --no-verify` become `verify: yes` or
 `verify: no`
+
+### Defining sub-configuration
+
+Let's say you have several tokens on the machine: a read-only token at `/etc/vault/read-only.token`
+and a read-write at `/etc/vault/read-write.token`. You can define 2 sub-configurations like this:
+
+```yaml
+url: https://example.vault
+select_config: read-only  # Default value
+configs:
+  read-only:
+    token-file: /etc/vault/read-only.token
+  read-write:
+    token-file: /etc/vault/read-write.token
+    safe-write: yes
+```
+Then when you use `vault` without specifying anything, you'll be using the read-only token.
+If you use `vault --select-config=read-write` or `vault -c read-write` or
+`VAULT_CLI_SELECT_CONFIG=read-write vault`, you'll be using the read-write token.
+
+The sub-configuration system should allow most types of use-case specific configurations.
+
+If you define the same sub-configuration blocks in several files, they will be merged together
+and, in case of a conflict, the last one will have precedence.
+
+### Environment variables
 
 All parameters can be defined from environment variables:
 

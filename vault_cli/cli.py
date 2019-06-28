@@ -114,9 +114,10 @@ def handle_errors():
     is_eager=True,
     callback=load_config,
     help="Config file to use. Use 'no' to disable config file. "
-    "Default value: first of " + ", ".join(CLI_CONFIG_FILES),
+    "Default value: " + ", ".join(CLI_CONFIG_FILES),
     type=click.Path(),
 )
+@click.option("-c", "--select-config", help="Name of the sub-configuration to use")
 @handle_errors()
 def cli(ctx: click.Context, **kwargs) -> None:
     """
@@ -129,12 +130,20 @@ def cli(ctx: click.Context, **kwargs) -> None:
     kwargs.pop("config_file")
     verbose = kwargs.pop("verbose")
 
+    kwargs["configs"] = ctx.default_map.get("configs")
+
+    saved_settings = {
+        "configs": kwargs.get("configs", settings.DEFAULTS.configs),
+        "select_config": kwargs.get("select_config", settings.DEFAULTS.select_config),
+        "verbose": verbose,
+    }
+    kwargs = settings.select_config(kwargs)
+
     kwargs.update(extract_special_args(ctx.default_map, os.environ))
 
     # There might still be files to read, so let's do it now
     kwargs = settings.read_all_files(kwargs)
-    saved_settings = kwargs.copy()
-    saved_settings.update({"verbose": verbose})
+    saved_settings.update(kwargs.copy())
 
     ctx.obj = client.get_client_class()(**kwargs)  # type: ignore
     ctx.obj.auth()

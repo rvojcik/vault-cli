@@ -91,9 +91,6 @@ def test_build_config_from_files(mocker):
             {},
         ],
     )
-    read_all_files = mocker.patch(
-        "vault_cli.settings.read_all_files", side_effect=lambda x: x
-    )
 
     result = settings.build_config_from_files("a", "b", "c")
 
@@ -103,7 +100,6 @@ def test_build_config_from_files(mocker):
     assert result["test3"] == {"test31": "31b", "test32": "32a", "test33": "33b"}
 
     assert "url" in result
-    assert read_all_files.called is True
 
 
 def test_recursive_update():
@@ -123,11 +119,16 @@ def test_build_config_from_files_no_files(mocker):
 
 def test_get_vault_options(mocker):
     mocker.patch("vault_cli.settings.build_config_from_files", return_value={"a": "b"})
+    read_all_files = mocker.patch(
+        "vault_cli.settings.read_all_files", side_effect=lambda x: x
+    )
+
     mocker.patch("os.environ", {"VAULT_CLI_URL": "d"})
 
     expected = {"a": "b", "url": "d", "e": "f"}
 
     assert settings.get_vault_options(e="f") == expected
+    read_all_files.assert_called()
 
 
 @pytest.mark.parametrize(
@@ -187,3 +188,55 @@ def test_build_config_from_env(value, expected):
 )
 def get_log_level(verbosity, log_level):
     assert settings.get_log_level(verbosity=verbosity) == getattr(logging, log_level)
+
+
+@pytest.mark.parametrize(
+    "value, expected",
+    [
+        # Empty settings
+        ({}, {}),
+        # Nothing relates to config
+        ({"a": "b"}, {"a": "b"}),
+        # There's a config, but nothing is selected
+        (
+            {"a": "b", "configs": {"c": {"a": "d", "g": "h"}}, "e": "f"},
+            {"a": "b", "e": "f"},
+        ),
+        # Config c is selected
+        (
+            {
+                "a": "b",
+                "select_config": "c",
+                "configs": {"c": {"a": "d", "g": "h"}},
+                "e": "f",
+            },
+            {"a": "d", "e": "f", "g": "h"},
+        ),
+        # Empty config is selected
+        (
+            {"a": "b", "select_config": "c", "configs": {"c": {}}, "e": "f"},
+            {"a": "b", "e": "f"},
+        ),
+    ],
+)
+def test_select_config(value, expected):
+    assert settings.select_config(value) == expected
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        # Config name is not a string
+        {"select_config": 1, "configs": {1: {}}},
+        # Configs are not a dict
+        {"select_config": "a"},
+        {"select_config": "a", "configs": ["a"]},
+        # Selected config is not a dict
+        {"select_config": "a", "configs": {"a": 1}},
+        # Selected config not found
+        {"select_config": "a", "configs": {"b": {}}},
+    ],
+)
+def test_select_config_error(value):
+    with pytest.raises(exceptions.VaultSettingsError):
+        settings.select_config(value)

@@ -39,6 +39,8 @@ class DEFAULTS:
     ca_bundle = None
     safe_write = False
     follow = True
+    select_config = None
+    configs = None
 
     @staticmethod
     def _as_dict():
@@ -153,7 +155,6 @@ def build_config_from_files(*config_files: str):
         file_config = read_config_file(potential_file)
         if file_config is not None:
             file_config = dash_to_underscores(file_config)
-            file_config = read_all_files(file_config)
             recursive_update(values, file_config)
             # Don't break here: we read all files.
 
@@ -181,7 +182,40 @@ def get_vault_options(**kwargs: types.Settings):
     values = build_config_from_files(*config_files).copy()
     values.update(build_config_from_env(os.environ.copy()))
     values.update(kwargs)
+    values = select_config(values)
+    values = read_all_files(values)
 
+    return values
+
+
+def select_config(values: types.SettingsDict) -> types.SettingsDict:
+    values = values.copy()
+
+    config_name = values.pop("select_config", None)
+    configs: Dict[str, types.SettingsDict] = values.pop("configs", None)  # type: ignore
+
+    if not config_name:
+        return values
+
+    if not isinstance(config_name, str):
+        raise exceptions.VaultSettingsError(
+            f'select_config is not a string: "{config_name}"'
+        )
+
+    if not isinstance(configs, dict):
+        raise exceptions.VaultSettingsError(f'configs is not a dict: "{configs}"')
+
+    if config_name not in configs:
+        raise exceptions.VaultSettingsError(
+            f'Cannot find configuration "{config_name}". Available: {", ".join(configs)})'
+        )
+
+    config: types.SettingsDict = configs[config_name]
+    if not isinstance(config, dict):
+        raise exceptions.VaultSettingsError(
+            f'config with key {config_name} is not a dict: "{configs}"'
+        )
+    recursive_update(values, config)
     return values
 
 
