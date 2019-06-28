@@ -15,6 +15,8 @@ CONTEXT_SETTINGS = {
     "auto_envvar_prefix": settings.ENV_PREFIX,
 }
 
+CLI_CONFIG_FILES = settings.compute_config_file_list()
+
 
 def load_config(ctx: click.Context, param: click.Parameter, value: str) -> None:
     if value == "no":
@@ -22,7 +24,7 @@ def load_config(ctx: click.Context, param: click.Parameter, value: str) -> None:
         return
 
     if value is None:
-        config_files = settings.CONFIG_FILES
+        config_files = CLI_CONFIG_FILES
     else:
         config_files = [value]
 
@@ -112,7 +114,7 @@ def handle_errors():
     is_eager=True,
     callback=load_config,
     help="Config file to use. Use 'no' to disable config file. "
-    "Default value: first of " + ", ".join(settings.CONFIG_FILES),
+    "Default value: first of " + ", ".join(CLI_CONFIG_FILES),
     type=click.Path(),
 )
 @handle_errors()

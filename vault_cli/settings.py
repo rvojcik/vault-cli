@@ -2,7 +2,7 @@ import logging
 import os
 import sys
 from functools import lru_cache
-from typing import Dict, Optional, Union
+from typing import Dict, List, Optional, Union
 
 import yaml
 
@@ -13,7 +13,18 @@ logger = logging.getLogger(__name__)
 ENV_PREFIX = "VAULT_CLI"
 
 # Ordered by increasing priority
-CONFIG_FILES = ["./.vault.yml", "~/.vault.yml", "/etc/vault.yml"]
+STATIC_CONFIG_FILES = ["/etc/vault.yml", "~/.vault.yml", "./.vault.yml"]
+CONFIG_DIR = "/etc/vault.d"
+
+
+def compute_config_file_list() -> List[str]:
+    yaml_files = sorted(
+        os.path.join(CONFIG_DIR, dir_path, file_name)
+        for dir_path, _, file_names in os.walk(CONFIG_DIR)
+        for file_name in file_names
+        if file_name.endswith(".yml") or file_name.endswith(".yaml")
+    )
+    return yaml_files + STATIC_CONFIG_FILES
 
 
 class DEFAULTS:
@@ -143,14 +154,31 @@ def build_config_from_files(*config_files: str):
         if file_config is not None:
             file_config = dash_to_underscores(file_config)
             file_config = read_all_files(file_config)
-            values.update(file_config)
-            break
+            recursive_update(values, file_config)
+            # Don't break here: we read all files.
 
     return values
 
 
+def recursive_update(target: Dict, to_copy: Dict):
+    """
+    Voluntary simple recursive update.
+    Recursion only occurs if the 2 values are dict, otherwise
+    the newer replaces the one in the target.
+
+    Modifies target in place.
+    """
+    for key, element_to_copy in to_copy.items():
+        target_element = target.get(key)
+        if isinstance(element_to_copy, dict) and isinstance(target_element, dict):
+            recursive_update(target_element, element_to_copy)
+        else:
+            target[key] = element_to_copy
+
+
 def get_vault_options(**kwargs: types.Settings):
-    values = build_config_from_files(*CONFIG_FILES).copy()
+    config_files = compute_config_file_list()
+    values = build_config_from_files(*config_files).copy()
     values.update(build_config_from_env(os.environ.copy()))
     values.update(kwargs)
 

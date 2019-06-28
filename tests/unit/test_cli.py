@@ -261,14 +261,14 @@ def test_load_config_no_config(mocker):
 
 
 @pytest.mark.parametrize(
-    "value, expected",
-    [("bla", ["bla"]), (None, ["./.vault.yml", "~/.vault.yml", "/etc/vault.yml"])],
+    "value, expected", [("bla", ["bla"]), (None, ["a", "b", "c", "d"])]
 )
 def test_load_config(mocker, value, expected):
     ctx = mocker.Mock()
     build = mocker.patch(
         "vault_cli.settings.build_config_from_files", return_value={"a": "b"}
     )
+    mocker.patch("vault_cli.cli.CLI_CONFIG_FILES", ["a", "b", "c", "d"])
     cli.load_config(ctx, None, value)
 
     assert ctx.default_map == {"a": "b"}

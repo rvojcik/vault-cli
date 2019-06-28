@@ -8,6 +8,25 @@ import pytest
 from vault_cli import exceptions, settings
 
 
+def test_compute_config_file_list(mocker):
+    mocker.patch(
+        "os.walk",
+        return_value=[
+            ("", ["d"], ["c.yml", "a.jpg", "a.yml", "b.yml"]),
+            ("d", [], "e.yml"),
+        ],
+    )
+
+    assert settings.compute_config_file_list() == [
+        "/etc/vault.d/a.yml",
+        "/etc/vault.d/b.yml",
+        "/etc/vault.d/c.yml",
+        "/etc/vault.yml",
+        "~/.vault.yml",
+        "./.vault.yml",
+    ]
+
+
 def test_read_config_file_not_existing():
     assert settings.read_config_file("/non-existant-file") is None
 
@@ -56,17 +75,41 @@ def test_read_file_stdin(mocker):
 
 def test_build_config_from_files(mocker):
     settings.build_config_from_files.cache_clear()
-    config_file = {"test-a": "b"}
-    mocker.patch("vault_cli.settings.read_config_file", return_value=config_file)
+    mocker.patch(
+        "vault_cli.settings.read_config_file",
+        side_effect=[
+            {
+                "test1": "1a",
+                "test2": ["1a"],
+                "test3": {"test31": "31a", "test32": "32a"},
+            },
+            {
+                "test1": "1b",
+                "test2": ["1b"],
+                "test3": {"test31": "31b", "test33": "33b"},
+            },
+            {},
+        ],
+    )
     read_all_files = mocker.patch(
         "vault_cli.settings.read_all_files", side_effect=lambda x: x
     )
 
-    result = settings.build_config_from_files("a")
+    result = settings.build_config_from_files("a", "b", "c")
 
-    assert result["test_a"] == "b"
+    # We check that values recursively overwrote each other as expected
+    assert result["test1"] == "1b"
+    assert result["test2"] == ["1b"]
+    assert result["test3"] == {"test31": "31b", "test32": "32a", "test33": "33b"}
+
     assert "url" in result
     assert read_all_files.called is True
+
+
+def test_recursive_update():
+    d = {1: 2, 3: 4, 5: {6: 7, 8: 9}, 16: [17]}
+    settings.recursive_update(d, {3: 10, 5: {8: 11, 12: 13}, 14: 15, 16: 18})
+    assert d == {1: 2, 3: 10, 5: {6: 7, 8: 11, 12: 13}, 14: 15, 16: 18}
 
 
 def test_build_config_from_files_no_files(mocker):
