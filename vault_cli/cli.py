@@ -1,4 +1,5 @@
 import contextlib
+import json
 import logging
 import os
 import pathlib
@@ -402,16 +403,45 @@ def delete(client_obj: client.VaultClientBase, name: str, key: Optional[str]) ->
 @cli.command("env")
 @click.option(
     "-p",
+    "--envvar",
     "--path",
     multiple=True,
-    required=True,
-    help="Folder or single item. Pass several times to load multiple values. You can use --path mypath=prefix or --path mypath:key=prefix if you want to change the generated names of the environment variables",
+    help="""
+    Load a secret from this path into one or more environment variables. Secret can be a
+    folder or single item. Pass several times to load secrets from different paths. You
+    can use --envvar mypath=prefix or --envvar mypath:key=prefix if you want to change
+    the generated names of the environment variables. --path is the original option
+    name, --envvar was added later for clarity, both work identically, and neither is
+    formerly deprecated. See command help for details.
+    """,
+)
+@click.option(
+    "--file",
+    multiple=True,
+    help="""
+    Write a secret from this path into a file on the filesystem. Expected format is
+    path/in/vault:key=/path/in/filesystem . This option is meant to be used when you are
+    your command can only read its inputs from a file and not from the environment (e.g.
+    secret keys, ...). It's highly recommended to only use the option when provided with
+    a secure private temporary filesystem. Writing to a physical disk should be avoided
+    when possible.
+    """,
+)
+@click.option(
+    "--template",
+    multiple=True,
+    help="""
+    Like --file, but files will be rendered by jinja2 prior to being written.
+    """,
 )
 @click.option(
     "-o",
     "--omit-single-key/--no-omit-single-key",
     default=False,
-    help="When the secret has only one key, don't use that key to build the name of the environment variable",
+    help="""
+    When the secret has only one key, don't use that key to build the name of the
+    environment variable. This option doesn't affect --file.
+    """,
 )
 @click.option(
     "-f",
@@ -424,20 +454,23 @@ def delete(client_obj: client.VaultClientBase, name: str, key: Optional[str]) ->
 @handle_errors()
 def env(
     client_obj: client.VaultClientBase,
-    path: Sequence[str],
+    envvar: Sequence[str],
+    file: Sequence[str],
+    template: Sequence[str],
     omit_single_key: bool,
     force: bool,
     command: Sequence[str],
 ) -> NoReturn:
     """
-    Launch a command, loading secrets in environment.
+    Write secrets to disk, load secrets in environment variable, then  lauch a command.
 
-    Strings are exported as-is, other types (including booleans, nulls, dicts, lists)
-    are exported JSON-encoded.
+    Secrets stored as strings are loaded as-is. Secrets of any other type exported as an
+    environment variable are JSON-encoded. Secrets of any other type written to a file
+    are YAML-encoded.
+
+    LOADING ENVIRONMENT VARIABLES
 
     If the path ends with `:key` then only one key of the mapping is used and its name is the name of the key.
-
-    VARIABLE NAMES
 
     By default the name is build upon the relative path to the parent of the given path (in parameter) and the name of the keys in the value mapping.
     Let's say that we have stored the mapping `{'username': 'me', 'password': 'xxx'}` at path `a/b/c`
@@ -453,11 +486,13 @@ def env(
     Using `--path a/b/c=FOO` will inject the following environment variables: FOO_USERNAME and FOO_PASSWORD
     Using `--path a/b/c:username=FOO` will inject `FOO=me` in the environment.
     """
-    paths = list(path) or [""]
+    envvars = list(envvar) or []
+    files = list(file) or []
+    templates = list(template) or []
 
     env_secrets = {}
 
-    for path in paths:
+    for path in envvars:
         path_with_key, _, prefix = path.partition("=")
         path, _, filter_key = path_with_key.partition(":")
 
@@ -472,9 +507,39 @@ def env(
 
         env_secrets.update(env_updates)
 
+    for file in files:
+        path_with_key, _, filesystem_path = file.partition("=")
+        path, _, key = path_with_key.partition(":")
+        if not path or not key or not filesystem_path:
+            raise click.BadOptionUsage(
+                "file", "--file expected format is vault/path:key=filesystem/path"
+            )
+        secret_obj = client_obj.get_secret(path=path, key=key)
+
+        if isinstance(secret_obj, str):
+            secret = secret_obj
+        else:
+            secret = yaml.safe_dump(
+                secret_obj, default_flow_style=False, explicit_start=True
+            )
+        print(f"writing {secret} at {filesystem_path}")
+        pathlib.Path(filesystem_path).write_text(secret)
+
+    for template in templates:
+        template_path = pathlib.Path(template)
+        template_text = template_path.read_text()
+        search_path = template_path.parent
+        result = client_obj.render_template(template_text, search_path=search_path)
+
     if bool(client_obj.errors) and not force:
         raise click.ClickException("There was an error while reading the secrets.")
     environment.exec_command(command=command, environment=env_secrets)
+
+
+def get_env_parts(value: str) -> Tuple[str, str, str]:
+    part12, _, part3 = value.partition("=")
+    part1, _, part2 = part12.partition(":")
+    return part1, part2, part3
 
 
 @cli.command("dump-config")
@@ -616,9 +681,9 @@ def template(client_obj: client.VaultClientBase, template: str, output: TextIO) 
         template_text = sys.stdin.read()
         search_path = pathlib.Path.cwd()
     else:
-        with open(template, mode="r") as ftemplate:
-            template_text = ftemplate.read()
-        search_path = pathlib.Path(template).parent
+        template_path = pathlib.Path(template)
+        template_text = template_path.read_text()
+        search_path = template_path.parent
 
     result = client_obj.render_template(template_text, search_path=search_path)
     output.write(result)
